@@ -20,8 +20,3 @@ The mapping of user AAD tenant id to subdomain is specified in the application c
 Application is registered as a web application with a single redirect url: https://beitmerari.com/signin-oidc
 
 
-Use subdomains, e.g.  to land users on pages rendered for their application tenancy.
-Use Azure AD multi-tenant app support to authenticate users.
-Use a single registered redirect url.
-ensure that once authenticated, user will always land on pages rendered for subdomain associated with their AAD tenant id.
-
