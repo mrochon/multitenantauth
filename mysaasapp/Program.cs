@@ -32,6 +32,10 @@ builder.Services.ConfigureAll<OpenIdConnectOptions>(options =>
 });
 builder.Services.Configure<CookieAuthenticationOptions>(CookieAuthenticationDefaults.AuthenticationScheme, options =>
 {
+    if ((tenants == null) || String.IsNullOrEmpty(tenants.Domain))
+        throw new Exception("Missing main application domain name in configuration.");
+    if (tenants.TenantSubDomainMap == null)
+        throw new Exception("No SubDomainMap in configuration.");
     options.Cookie.Domain = tenants.Domain;
 });
 
@@ -67,17 +71,22 @@ app.Use(async (context, next) =>
     if(context.User != null)
     {
         var subdomain = string.Empty;
+        var error = String.Empty;
         var tid = context.User.FindFirst("http://schemas.microsoft.com/identity/claims/tenantid")?.Value;
-        if (!tenants.TenantSubDomainMap.TryGetValue(tid, out subdomain))
-        {
-            context.Response.StatusCode = 403;
-            await context.Response.WriteAsJsonAsync(new { tid, msg = "Not found" });
-            return;
-        }
-        else if(!context.Request.Host.Host.StartsWith(subdomain, StringComparison.OrdinalIgnoreCase))
+        if (tid == null)
+            error = "No tid in ClaimsPrincipal";
+        else if (!tenants!.TenantSubDomainMap!.TryGetValue(tid, out subdomain))
+            error = $"{tid} not found in SubDomainMap";
+        else if (!context.Request.Host.Host.StartsWith(subdomain, StringComparison.OrdinalIgnoreCase))
         {
             context.Response.Redirect($"https://{subdomain}.{tenants.Domain}");
             return;
+        }
+        if(!String.IsNullOrEmpty(error))
+        {
+                context.Response.StatusCode = 403;
+                await context.Response.WriteAsJsonAsync(new { msg = error });
+                return;
         }
     }
     await next.Invoke();
