@@ -6,8 +6,14 @@ using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.UI;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using mysaasapp.Models;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Http.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
+
+var tenants = builder.Configuration.GetSection("Tenants").Get<TenantOptions>();
 
 // Add services to the container.
 builder.Services.AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
@@ -18,18 +24,15 @@ builder.Services.ConfigureAll<OpenIdConnectOptions>(options =>
     var nextRedirectHandler = options.Events.OnRedirectToIdentityProvider;
     options.Events.OnRedirectToIdentityProvider = async ctx =>
     {
-        if (!ctx.ProtocolMessage.RedirectUri.Contains("https://localhost"))
-        {
-            ctx.ProtocolMessage.RedirectUri = "https://beitmerari.com/signin-oidc";
-            options.CorrelationCookie.Domain = "beitmerari.com";
-            options.NonceCookie.Domain = "beitmerari.com";
-        }
+        ctx.ProtocolMessage.RedirectUri = "https://beitmerari.com/signin-oidc";
+        options.CorrelationCookie.Domain = tenants.Domain;
+        options.NonceCookie.Domain = tenants.Domain;
         await nextRedirectHandler(ctx);
     };
 });
 builder.Services.Configure<CookieAuthenticationOptions>(CookieAuthenticationDefaults.AuthenticationScheme, options =>
 {
-    options.Cookie.Domain = "beitmerari.com";
+    options.Cookie.Domain = tenants.Domain;
 });
 
 builder.Services.AddControllersWithViews(options =>
@@ -61,11 +64,17 @@ app.UseAuthorization();
 
 app.Use(async (context, next) =>
 {
-    if((context.User != null) && (context.User.FindFirst("http://schemas.microsoft.com/identity/claims/tenantid").Value == "72f988bf-86f1-41af-91ab-2d7cd011db47"))
+    if(context.User != null)
     {
-        if(!context.Request.Host.Host.StartsWith("cust1"))
+        var subdomain = string.Empty;
+        if(tenants.TenantSubDomainMap.ContainsKey(context.User.FindFirst("http://schemas.microsoft.com/identity/claims/tenantid").Value))
+            subdomain = tenants.TenantSubDomainMap[context.User.FindFirst("http://schemas.microsoft.com/identity/claims/tenantid").Value];
+        if(string.IsNullOrEmpty(subdomain))
+            context.Response.StatusCode = 403;
+        else if(!context.Request.Host.Host.StartsWith(subdomain, StringComparison.OrdinalIgnoreCase))
         {
-            context.Response.Redirect("https://cust1.beitmerari.com");
+            context.Response.Redirect($"https://{subdomain}.{tenants.Domain}");
+            return;
         }
     }
     await next.Invoke();
