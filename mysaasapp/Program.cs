@@ -24,7 +24,7 @@ builder.Services.ConfigureAll<OpenIdConnectOptions>(options =>
     var nextRedirectHandler = options.Events.OnRedirectToIdentityProvider;
     options.Events.OnRedirectToIdentityProvider = async ctx =>
     {
-        ctx.ProtocolMessage.RedirectUri = "https://beitmerari.com/signin-oidc";
+        ctx.ProtocolMessage.RedirectUri = $"https://{tenants.Domain}/signin-oidc";
         options.CorrelationCookie.Domain = tenants.Domain;
         options.NonceCookie.Domain = tenants.Domain;
         await nextRedirectHandler(ctx);
@@ -67,10 +67,13 @@ app.Use(async (context, next) =>
     if(context.User != null)
     {
         var subdomain = string.Empty;
-        if(tenants.TenantSubDomainMap.ContainsKey(context.User.FindFirst("http://schemas.microsoft.com/identity/claims/tenantid").Value))
-            subdomain = tenants.TenantSubDomainMap[context.User.FindFirst("http://schemas.microsoft.com/identity/claims/tenantid").Value];
-        if(string.IsNullOrEmpty(subdomain))
+        var tid = context.User.FindFirst("http://schemas.microsoft.com/identity/claims/tenantid")?.Value;
+        if (!tenants.TenantSubDomainMap.TryGetValue(tid, out subdomain))
+        {
             context.Response.StatusCode = 403;
+            await context.Response.WriteAsJsonAsync(new { tid, msg = "Not found" });
+            return;
+        }
         else if(!context.Request.Host.Host.StartsWith(subdomain, StringComparison.OrdinalIgnoreCase))
         {
             context.Response.Redirect($"https://{subdomain}.{tenants.Domain}");
