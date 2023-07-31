@@ -16,66 +16,72 @@ var builder = WebApplication.CreateBuilder(args);
 
 var tenantOptions = builder.Configuration.GetSection("Tenants").Get<TenantOptions>();
 
-builder.Services.AddAuthentication(options =>
-{
-    options.DefaultScheme = "B2C_OR_AAD";
-    options.DefaultChallengeScheme = "B2C_OR_AAD";
-    options.DefaultAuthenticateScheme = "B2C_OR_AAD";
-})
-.AddOpenIdConnect(authenticationScheme: "AAD", displayName: "AAD", options =>
-{
-    builder.Configuration.Bind("AzureAD", options);
-    options.UseTokenLifetime = true;
-    options.TokenValidationParameters = new TokenValidationParameters() { ValidateIssuer = false };
-    options.Events ??= new OpenIdConnectEvents();
-    options.Events.OnRedirectToIdentityProvider = async ctx =>
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options =>
     {
-        ctx.ProtocolMessage.RedirectUri = $"https://{tenantOptions.Domain}/signin-oidc";
-        options.CorrelationCookie.Domain = tenantOptions.Domain;
-        options.NonceCookie.Domain = tenantOptions.Domain;
-        await Task.CompletedTask;
-    };
-})
-.AddOpenIdConnect(authenticationScheme: "B2C", displayName: "B2C", options =>
-{
-    builder.Configuration.Bind("AzureB2C", options);
-    options.UseTokenLifetime = true;
-    options.Events ??= new OpenIdConnectEvents();
-    options.Events.OnRedirectToIdentityProvider = async ctx =>
+        if ((tenantOptions == null) || String.IsNullOrEmpty(tenantOptions.Domain))
+            throw new Exception("Missing main application domain name in configuration.");
+        if (tenantOptions.TenantSubDomainMap == null)
+            throw new Exception("No SubDomainMap in configuration.");
+        options.Cookie.Domain = $".localhost";
+        options.ForwardAuthenticate = CookieAuthenticationDefaults.AuthenticationScheme;
+        options.ForwardSignIn = CookieAuthenticationDefaults.AuthenticationScheme;
+        options.ForwardDefaultSelector = ctx =>
+        {
+            return ctx.Request.Host.Host.StartsWith("cust2", StringComparison.InvariantCultureIgnoreCase) ? "B2C" : "AAD";
+        };
+        options.Events.OnValidatePrincipal = (ctx) =>
+        {
+            return Task.CompletedTask;
+        };
+        options.Events.OnSigningIn = (ctx) =>
+        {
+            return Task.CompletedTask;
+        };
+        options.Events.OnSignedIn = (ctx) =>
+        {
+            return Task.CompletedTask;
+        };
+    })
+    .AddOpenIdConnect(authenticationScheme: "AAD", displayName: "AAD", options =>
     {
-        ctx.ProtocolMessage.RedirectUri = $"https://{tenantOptions.Domain}/signin-oidc";
-        options.CorrelationCookie.Domain = tenantOptions.Domain;
-        options.NonceCookie.Domain = tenantOptions.Domain;
-        await Task.CompletedTask;
-    };
-})
-.AddCookie(CookieAuthenticationDefaults.AuthenticationScheme)
-.AddPolicyScheme("B2C_OR_AAD", "B2C_OR_AAD", options =>
-{
-    options.ForwardDefaultSelector = context =>
-    {
-        var tenantName = context.Request.Host.Host.Split('.')[0];
-        return tenantName.Equals("cust2", StringComparison.InvariantCultureIgnoreCase) ? "B2C" : "AAD";
-    };
-}
-)
-;
+        builder.Configuration.Bind("AzureAD", options);
+        options.CorrelationCookie.Domain = $".localhost";
+        options.NonceCookie.Domain = $".localhost";
+        options.UseTokenLifetime = true;
+        options.TokenValidationParameters = new TokenValidationParameters() { ValidateIssuer = false };
+        options.Events ??= new OpenIdConnectEvents();
+        options.Events.OnRedirectToIdentityProvider = async ctx =>
+        {
+            ctx.ProtocolMessage.RedirectUri = $"https://{tenantOptions.Domain}/signin-oidc";
 
-builder.Services.Configure<CookieAuthenticationOptions>(CookieAuthenticationDefaults.AuthenticationScheme, options =>
-{
-    if ((tenantOptions == null) || String.IsNullOrEmpty(tenantOptions.Domain))
-        throw new Exception("Missing main application domain name in configuration.");
-    if (tenantOptions.TenantSubDomainMap == null)
-        throw new Exception("No SubDomainMap in configuration.");
-    options.Cookie.Domain = tenantOptions.Domain;
-});
+            await Task.CompletedTask;
+        };
+    })
+    .AddOpenIdConnect(authenticationScheme: "B2C", displayName: "B2C", options =>
+    {
+        builder.Configuration.Bind("AzureB2C", options);
+        options.CorrelationCookie.Domain = $".localhost";
+        options.NonceCookie.Domain = $".localhost";
+        //options.CorrelationCookie.Domain = $".{tenantOptions.Domain}";
+        //options.NonceCookie.Domain = $".{tenantOptions.Domain}";
+        options.UseTokenLifetime = true;
+        options.Events ??= new OpenIdConnectEvents();
+        options.Events.OnRedirectToIdentityProvider = async ctx =>
+        {
+            ctx.ProtocolMessage.RedirectUri = $"https://{tenantOptions.Domain}/b2c/signin-oidc";
+            await Task.CompletedTask;
+        };
+    });
+
+
 
 builder.Services.AddControllersWithViews(options =>
 {
-    //var policy = new AuthorizationPolicyBuilder()
-    //    .RequireAuthenticatedUser()
-    //    .Build();
-    //options.Filters.Add(new AuthorizeFilter(policy));
+    var policy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .Build();
+    options.Filters.Add(new AuthorizeFilter(policy));
 });
 builder.Services.AddRazorPages()
     .AddMicrosoftIdentityUI();
@@ -101,7 +107,7 @@ app.Use(async (context, next) =>
 {
     // This code will ensure that an authenticated user is always redirected
     // to the correct subdomain    
-    if(context.User != null)
+    if((context.User.Identity != null) && context.User.Identity.IsAuthenticated)
     {
         var subdomain = string.Empty;
         var error = String.Empty;
